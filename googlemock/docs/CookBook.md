@@ -623,6 +623,118 @@ that, `MockFoo::Concrete()` will be called (and cause an infinite
 recursion) since `Foo::Concrete()` is virtual. That's just how C++
 works.)
 
+## Mocking Singletons ##
+
+Consider the following Singleton:
+
+```cpp
+Class Foo
+{
+    static std::once_flag onceFlag;
+    static Foo* instance;
+
+public:
+    static Foo* GetInstance(){
+        std::call_once(onceFlag, []{
+            instance = new Foo();
+        });
+
+        return instance;
+    }
+
+    virtual int MyMethod()
+    {
+        throw "exception";
+    };
+
+private:
+    
+    Foo(){}
+    Foo(const Foo& src){}
+    Foo& operator=(const Foo& rhs){}
+
+    virtual ~Foo(){}
+};
+```
+In order to mock a Singleton you’ll need to be able to change it’s 
+private instance and be able to call it’s constructor.
+
+Since a Singleton’s constructor is usually private you’ll need the 
+Fake object to be a friend of the Singleton. Although this requires 
+changing the production code, it's it's less intrusive than refractoring.
+
+Since linking production code with test code is not a good idea,
+add a forward declaration to the mock class.
+
+Also add another class in order to swap the Singleton’s instance with 
+the mock object (i.e. FooAccessor):
+
+```cpp
+class MockFoo;
+class FooAccessor;
+
+Class Foo
+{
+    static std::once_flag onceFlag;
+    static Foo* instance;
+
+public:
+    static Foo* GetInstance(){
+        std::call_once(onceFlag, []{
+            instance = new Foo();
+        });
+
+        return instance;
+    }
+
+    virtual int MyMethod()
+    {
+        throw "exception";
+    };
+
+private:
+    
+    Foo(){}
+    Foo(const Foo& src){}
+    Foo& operator=(const Foo& rhs){}
+
+    virtual ~Foo(){}
+
+    friend class MockFoo;
+    friend class FooAccessor;
+};
+```
+
+Accessor class can swap the newly created mock in place of the actual singleton instance.
+
+```cpp
+class FooAccessor
+{
+public:
+    static void set(Foo* other)
+    {
+        // Execute singleton at least once
+        Foo::GetInstance();
+        
+        delete Foo::instance;
+        
+        Foo::instance = other;
+    }
+};
+```
+
+Now you can write the actual test.
+
+```cpp
+...
+  auto mockFoo = new MockFoo();
+   
+  FooAccessor::set(mockFoo);
+   
+  EXPECT_CALL(Foo::GetInstance, MyMethod())
+...
+```
+
 # Using Matchers #
 
 ## Matching Argument Values Exactly ##
